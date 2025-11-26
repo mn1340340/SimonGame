@@ -1,0 +1,771 @@
+module simoncopy(CLOCK_50, SW, KEY, LEDR, VGA_R, VGA_G, VGA_B, 
+  VGA_HS, VGA_VS, VGA_BLANK_N, VGA_SYNC_N, VGA_CLK, AUD_ADCDAT,
+
+	// Bidirectionals
+	AUD_BCLK,
+	AUD_ADCLRCK,
+	AUD_DACLRCK,
+
+	FPGA_I2C_SDAT,
+
+	// Outputs
+	AUD_XCK,
+	AUD_DACDAT,
+
+	FPGA_I2C_SCLK,
+	);
+
+  input CLOCK_50;  
+  input [3:0] KEY;
+  input [0:0] SW;
+  output reg [9:0] LEDR;
+
+  output [7:0] VGA_R;
+  output [7:0] VGA_G;
+  output [7:0] VGA_B;
+  output VGA_HS;
+  output VGA_VS;
+  output VGA_BLANK_N;
+  output VGA_SYNC_N;
+  output VGA_CLK;
+
+  wire reset;
+  assign reset=SW[0];
+
+
+/*****************************************************************************
+ *                           Parameter Declarations                          *
+ *****************************************************************************/
+
+
+/*****************************************************************************
+ *                             Port Declarations                             *
+ *****************************************************************************/
+
+
+input				AUD_ADCDAT;
+
+// Bidirectionals
+inout				AUD_BCLK;
+inout				AUD_ADCLRCK;
+inout				AUD_DACLRCK;
+
+inout				FPGA_I2C_SDAT;
+
+// Outputs
+output				AUD_XCK;
+output				AUD_DACDAT;
+
+output				FPGA_I2C_SCLK;
+
+/*****************************************************************************
+ *                 Internal Wires and Registers Declarations                 *
+ *****************************************************************************/
+// Internal Wires
+wire				audio_in_available;
+reg		[31:0]	left_channel_audio_in;
+reg		[31:0]	right_channel_audio_in;
+wire				read_audio_in;
+
+wire				audio_out_allowed;
+wire		[31:0]	left_channel_audio_out;
+wire		[31:0]	right_channel_audio_out;
+reg				write_audio_out;
+
+wire     [31:0] q_data;
+
+wire     [31:0] q_data_B;
+wire     [31:0] q_data_G;
+wire     [31:0] q_data_E;
+wire     [31:0] q_data_C;
+
+//mux
+assign q_data = (selected_audio == 2'b00) ? q_data_B :
+                (selected_audio == 2'b01) ? q_data_G :
+                (selected_audio == 2'b10) ? q_data_E :
+                q_data_C;
+
+// Internal Registers
+
+reg playback;
+reg [15:0] addr_cnt;
+reg is_lower;
+reg delay; // down sampling to 24
+
+reg enable;
+reg [1:0] selected_audio;
+
+// State Machine Registers
+
+/*****************************************************************************
+ *                         Finite State Machine(s)                           *
+ *****************************************************************************/
+
+
+/*****************************************************************************
+ *                             Sequential Logic                              *
+ *****************************************************************************/
+
+always @(posedge CLOCK_50)
+	if (reset) begin
+		addr_cnt <= 16'b0;
+		write_audio_out <= 1'b0;
+		playback <= 1'b0;
+	end else if (vga_box_select_synced==4'b0001) begin
+		playback <= 1'b1;
+		addr_cnt <= 16'b0;
+		write_audio_out <= 1'b0;
+		selected_audio <= 2'b00;
+	end else if (vga_box_select_synced==4'b0010) begin
+		playback <= 1'b1;
+		addr_cnt <= 16'b0;
+		write_audio_out <= 1'b0;
+		selected_audio <= 2'b01;
+	end else if (vga_box_select_synced==4'b0100) begin
+		playback <= 1'b1;
+		addr_cnt <= 16'b0;
+		write_audio_out <= 1'b0;
+		selected_audio <= 2'b10;
+	end else if (vga_box_select_synced==4'b1000) begin
+		playback <= 1'b1;
+		addr_cnt <= 16'b0;
+		write_audio_out <= 1'b0;
+		selected_audio <= 2'b11;
+	end else if (audio_out_allowed && playback) begin
+		if (enable)
+			addr_cnt <= addr_cnt + 1;
+		write_audio_out <= 1'b1;
+		if (addr_cnt == 16'hFFFF && enable)
+			playback <= 1'b0;
+	end
+
+/****32bit, L Only, Down Sampled****/
+
+always @(posedge CLOCK_50) begin
+	if (reset) begin
+		enable <= 1'b0;
+		is_lower <= 1'b0;
+		delay <= 1'b0;
+	end else if (audio_out_allowed && playback) begin
+		if (delay && is_lower) begin
+			enable <= 1'b1;
+			delay <= 1'b0;
+		end else if (delay) begin
+			enable <= 1'b0;
+		end else if (is_lower) begin
+			delay <= ~delay;
+			enable <= 1'b0;
+		end else begin
+			enable <= 1'b0;
+		end
+		is_lower <= ~is_lower;
+	end
+end
+
+assign left_channel_audio_out	= (is_lower) ? {q_data[15:0], 16'b0} : {q_data[31:16], 16'b0};
+assign right_channel_audio_out	= (is_lower) ? {q_data[15:0], 16'b0} : {q_data[31:16], 16'b0};
+
+
+/*****************************************************************************
+ *                              Internal Modules                             *
+ *****************************************************************************/
+
+piano_key_B	piano_key_B_inst (
+	.address ( addr_cnt ),
+	.clock ( CLOCK_50 ),
+	.data (  ),
+	.wren ( 1'b0 ),
+	.q ( q_data_B )
+);
+
+piano_key_G	piano_key_G_inst(
+	.address ( addr_cnt ),
+	.clock ( CLOCK_50 ),
+	.data (  ),
+	.wren ( 1'b0 ),
+	.q ( q_data_G )
+);
+
+piano_key_E	piano_key_E_inst (
+	.address ( addr_cnt ),
+	.clock ( CLOCK_50 ),
+	.data (  ),
+	.wren ( 1'b0 ),
+	.q ( q_data_E )
+);
+
+piano_key_C	piano_key_C_inst(
+	.address ( addr_cnt ),
+	.clock ( CLOCK_50 ),
+	.data (  ),
+	.wren ( 1'b0 ),
+	.q ( q_data_C )
+);
+
+ 
+Audio_Controller Audio_Controller (
+	// Inputs
+	.CLOCK_50						(CLOCK_50),
+	.reset						(SW[0]),
+
+	.clear_audio_in_memory		(),
+	.read_audio_in				(read_audio_in),
+	
+	.clear_audio_out_memory		(),
+	.left_channel_audio_out		(left_channel_audio_out),
+	.right_channel_audio_out	(right_channel_audio_out),
+	.write_audio_out			(write_audio_out),
+
+	.AUD_ADCDAT					(AUD_ADCDAT),
+
+	// Bidirectionals
+	.AUD_BCLK					(AUD_BCLK),
+	.AUD_ADCLRCK				(AUD_ADCLRCK),
+	.AUD_DACLRCK				(AUD_DACLRCK),
+
+
+	// Outputs
+	.audio_in_available			(audio_in_available),
+	.left_channel_audio_in		(),
+	.right_channel_audio_in		(),
+
+	.audio_out_allowed			(audio_out_allowed),
+
+	.AUD_XCK					(AUD_XCK),
+	.AUD_DACDAT					(AUD_DACDAT)
+
+);
+
+avconf #(.USE_MIC_INPUT(1)) avc (
+	.FPGA_I2C_SCLK					(FPGA_I2C_SCLK),
+	.FPGA_I2C_SDAT					(FPGA_I2C_SDAT),
+	.CLOCK_50					(CLOCK_50),
+	.reset						(~KEY[0])
+);
+
+
+
+  // specify the number of bits needed for an X (column) pixel coordinate on the VGA display
+  parameter nX = 10;
+  // specify the number of bits needed for a Y (row) pixel coordinate on the VGA display
+  parameter nY = 9;
+
+
+  // Box properties
+  parameter BOX_SIZE_X = 10'd200;  // FIXED: separate X and Y
+  parameter BOX_SIZE_Y = 9'd200;
+
+
+    parameter X1 = 210, Y1 = 350, COLOR1 = 9'b111000000, COLOR1b = 9'b111010010;    // red
+    parameter X2 = 430, Y2 = 350, COLOR2 = 9'b001111001, COLOR2b = 9'b100111010;   // green
+    parameter X3 = 210, Y3 = 130, COLOR3 = 9'b000001111, COLOR3b = 9'b001010111;   // blue
+    parameter X4 = 430, Y4 = 130, COLOR4 = 9'b111111000, COLOR4b = 9'b111111010;    // yellow
+
+
+    // FSM combinational logic
+    localparam A=2'b00, B=2'b01, C=2'b10, D=2'b11;
+
+    reg [1:0] box_select=0;
+    reg [1:0] y_Q, Y_D; // FSM
+    reg [8:0] color;
+    reg [nX-1:0] X;
+    reg [nY-1:0] Y;
+
+    always @(posedge CLOCK_50) begin
+        if (box_select>=4) begin
+            box_select <= 0;
+        end else if (y_Q == D) begin
+            box_select <= box_select + 1;
+        end
+    end
+
+    // Select which box to draw
+    always @(*) begin
+        case (box_select)
+            2'd0: begin
+                X = X1; Y = Y1;
+                if (vga_box_select_synced==4'b0001)
+                color = COLOR1b;
+                else
+                color = COLOR1;
+            end
+
+            2'd1: begin X = X2; Y = Y2;
+                if (vga_box_select_synced==4'b0010)
+                color = COLOR2b;
+                else
+                color = COLOR2;
+            end
+
+            2'd2: begin X = X3; Y = Y3;
+                if (vga_box_select_synced==4'b0100)
+                color = COLOR3b;
+                else
+                color = COLOR3;
+            end
+        
+            2'd3: begin X = X4; Y = Y4;
+                if (vga_box_select_synced==4'b1000)
+                color = COLOR4b;
+                else
+                color = COLOR4;
+            end
+        endcase
+    end
+
+  // assign static values
+ 
+  wire go = 1'b1;  // always draw, // used by FSM
+  wire [nX-1:0] size_x = BOX_SIZE_X;
+  wire [nY-1:0] size_y = BOX_SIZE_Y;
+ 
+  wire [nX-1:0] XC;           // box offsets and counters
+  wire [nY-1:0] YC;                    
+  reg write, Lxc, Lyc, Exc, Eyc;  // box control signals
+
+
+  // these counters are used to generate pixel coordinates for the box
+  Up_count U1 ({nX{1'd0}}, CLOCK_50, reset, Lxc, Exc, XC);
+      defparam U1.n = nX;
+  Up_count U2 ({nY{1'd0}}, CLOCK_50, reset, Lyc, Eyc, YC);
+      defparam U2.n = nY;
+
+// FSM next state logic (state table)
+  always @ (*)
+      case (y_Q)
+          A:  if (~go) Y_D = A;
+              else Y_D = B;
+          B:  if (XC != size_x-1) Y_D = B;  // box x coordinate (column)
+              else Y_D = C;
+          C:  if (YC != size_y-1) Y_D = B;  // box y coordinate (row)
+              else Y_D = D;
+          D:  Y_D = A;
+      endcase
+     
+  // FSM outputs
+  always @ (*)
+  begin
+      // default assignments
+      write = 1'b0; Lxc = 1'b0; Lyc = 1'b0; Exc = 1'b0; Eyc = 1'b0;
+      case (y_Q)
+          A:  begin Lxc = 1'b1; Lyc = 1'b1; end   // load (XC,YC) counter
+          B:  begin Exc = 1'b1; write = 1'b1; end // enable XC, write pixel
+          C:  begin Lxc = 1'b1; Eyc = 1'b1; end   // enable YC, load XC
+          D:  Lyc = 1'b1;                         // load YC
+      endcase
+  end
+
+   // FSM state update
+   always @(posedge CLOCK_50)
+       if (~reset)
+           y_Q <= A;
+       else
+           y_Q <= Y_D;
+
+  vga_adapter VGA (
+      .resetn(reset),
+      .clock(CLOCK_50),
+      .color(color),
+      .x(X - (size_x >> 1) + XC),
+      .y(Y - (size_y >> 1) + YC),
+      .write(write),
+      .VGA_R(VGA_R),
+      .VGA_G(VGA_G),
+      .VGA_B(VGA_B),
+      .VGA_HS(VGA_HS),
+      .VGA_VS(VGA_VS),
+      .VGA_BLANK_N(VGA_BLANK_N),
+      .VGA_SYNC_N(VGA_SYNC_N),
+      .VGA_CLK(VGA_CLK));
+
+    //main FSM states -one hot encoding
+    localparam state_idle=10'b0000000001;
+    localparam state_random=10'b0000000010;
+    localparam state_notrandom=10'b0000000100;
+    localparam state_display=10'b0000001000;
+    localparam state_notdisplay=10'b0000010000;
+    localparam state_input =10'b0000100000;
+    localparam state_check=10'b0001000000;
+    localparam state_over=10'b0010000000;
+    localparam state_newround=10'b0100000000;
+    localparam state_YOUWIN=10'b1000000000;
+
+    //small button checker states
+    localparam b_one= 2'b00;
+    localparam b_two=2'b01;
+    localparam b_three=2'b10;
+    localparam b_four=2'b11;
+
+    //led states
+        // button lights
+    localparam led1=10'b0000000001;
+    localparam led2=10'b0000000010;
+    localparam led3=10'b0000000100;
+    localparam led4=10'b0000001000;
+        //computer lights
+    localparam led_off= 10'b1000000000;
+    localparam led_win= 10'b0101010101;
+    localparam led_correct= 10'b0000001111;
+    localparam led_lose= 10'b1111111111;
+        //led indexing
+    reg [4:0] led_pos;
+
+    //sequence storage in registers
+
+      //32 max rounds * 2 for buttons (2^2 buttons)
+    reg[63:0] computer_seq=64'b0;
+    reg[63:0] player_seq=64'b0;
+
+      //5 bit to count to 64
+    reg[4:0] computer_pos;
+    reg[4:0] player_pos;
+
+    reg[9:0] state_current=10'b0000000001;
+	 
+    //generate slow clock
+    wire slow_clk;
+    display_clock dspc0(CLOCK_50, slow_clk);
+    reg[31:0] input_timer;
+    //
+
+    //generate random
+    wire [15:0] lfsr;
+    randomiser r0(CLOCK_50, reset, lfsr);
+    wire [1:0] new_rnd_val;
+	 assign new_rnd_val=lfsr[1:0];
+
+    //button debouncing
+    wire[3:0] button_on;
+    wire a_button_on;
+    
+    wire db_clk;
+    debounce_clock dbc0(CLOCK_50, db_clk);
+
+    debounce db0(.reset(~reset), .clk(CLOCK_50), .db_clk(db_clk), .KEY(KEY[0]), .button_on(button_on[0])); //debounces each key
+    debounce db1(.reset(~reset), .clk(CLOCK_50), .db_clk(db_clk), .KEY(KEY[1]), .button_on(button_on[1]));
+    debounce db2(.reset(~reset), .clk(CLOCK_50), .db_clk(db_clk), .KEY(KEY[2]), .button_on(button_on[2]));
+    debounce db3(.reset(~reset), .clk(CLOCK_50), .db_clk(db_clk), .KEY(KEY[3]), .button_on(button_on[3]));
+	
+    reg [3:0] button_pressed_last;
+    wire [3:0] button_edge;
+    
+    assign button_edge[0] = button_on[0] & ~button_pressed_last[0];
+    assign button_edge[1] = button_on[1] & ~button_pressed_last[1];
+    assign button_edge[2] = button_on[2] & ~button_pressed_last[2];
+    assign button_edge[3] = button_on[3] & ~button_pressed_last[3];
+    
+    wire any_button_edge;
+    assign any_button_edge = button_edge[0] | button_edge[1] | button_edge[2] | button_edge[3];
+    
+    always @(posedge slow_clk) begin
+        if (~reset) begin
+            button_pressed_last <= 4'b0000;
+        end else begin
+            button_pressed_last <= button_on;
+        end
+    end
+    
+    reg[4:0] counter;
+   //////clock crossing 
+
+     reg [3:0] vga_box_select;           // Updated on slow_clk
+     reg [3:0] vga_box_select_syncing;     // First stage synchronizer
+     reg [3:0] vga_box_select_synced;     // Second stage synchronizer (stable)
+
+    // Two flip flop
+    always @(posedge CLOCK_50) begin
+        if (~reset) begin
+            vga_box_select_syncing <= 4'b0000;
+            vga_box_select_synced <= 4'b0000;
+        end else begin
+            vga_box_select_syncing <= vga_box_select;      // First stage
+            vga_box_select_synced <= vga_box_select_syncing; // Second stage (stable)
+        end
+    end
+
+    //main game FSM states runs on slow clk
+    always@(posedge slow_clk) begin
+        if(~reset) begin
+            state_current<=state_idle;
+            computer_seq<=64'b0;
+            player_seq<=64'b0;
+            computer_pos<=5'b0;
+            player_pos<=5'b0;
+            led_pos<=5'b0;
+            LEDR<=led_off;
+            vga_box_select<=4'b0000;
+        end else begin
+			case(state_current)
+			
+            state_idle: begin
+                if(any_button_edge) begin 
+                    computer_pos<=5'b0;
+                    computer_seq<=64'b0;
+                    player_seq<=64'b0;
+                    player_pos<=5'b0;
+					led_pos<=5'b0;
+					LEDR<=led_off;
+                    state_current<=state_random;
+                    vga_box_select<=4'b0000;
+                end
+            end
+				
+            state_random: begin
+                computer_seq[computer_pos*2+:2]<=new_rnd_val;
+
+                computer_pos<=computer_pos+1'b1;
+                state_current<=state_notrandom;
+            end
+
+            state_notrandom: begin
+                LEDR<=led_off;
+                led_pos<=5'b0;
+                state_current<=state_display;
+            end
+
+            state_display: begin
+                    case(computer_seq[led_pos*2+:2]) //update b_one....
+                        b_one: begin 
+                            LEDR<=led1;
+                            vga_box_select<=4'b0001;
+                            
+                        end
+                        b_two: begin
+                            LEDR<=led2;
+                            vga_box_select<=4'b0010;
+                        end
+
+                        b_three: begin
+                            LEDR<=led3;
+                            vga_box_select<=4'b0100;
+                        end
+                        b_four: begin
+                            LEDR<=led4;
+                            vga_box_select<=4'b1000;
+                        end 
+                    endcase
+                
+                led_pos<=led_pos+1'b1;
+                state_current<=state_notdisplay;
+            end
+
+            state_notdisplay: begin
+                LEDR<=led_off;
+                vga_box_select<=4'b0000;
+                if(led_pos>=computer_pos) begin ///what does it display if all are zero
+                    input_timer<=32'd0;
+                    state_current<=state_input;
+                end else begin
+                    state_current<=state_display;
+                end
+            end
+
+            state_input:begin
+                case(1'b1)
+                    button_edge[0]: begin
+                          input_timer <= 32'd0;
+						  player_seq[player_pos*2+:2]<=b_one;
+						  player_pos<=player_pos+1'b1;
+                          LEDR<=led1;
+						  end
+						  
+                    button_edge[1]: begin
+                          input_timer <= 32'd0;
+						  player_seq[player_pos*2+:2]<=b_two;
+						  player_pos<=player_pos+1'b1;
+                          LEDR<=led2;
+						  end
+						  
+                     button_edge[2]: begin
+                          input_timer <= 32'd0;
+						  player_seq[player_pos*2+:2]<=b_three;
+						  player_pos<=player_pos+1'b1;
+                          LEDR<=led3;
+						  end
+						  
+                     button_edge[3]: begin
+                          input_timer <= 32'd0;
+						  player_seq[player_pos*2+:2]<=b_four;
+						  player_pos<=player_pos+1'b1;
+                          LEDR<=led4;
+                    end
+                    default: begin
+                    end
+                    
+                endcase
+
+                if(~KEY[0]) begin 
+                    vga_box_select<=4'b0001;
+                end else if(~KEY[1]) begin
+                    vga_box_select<=4'b0010;
+                end else if(~KEY[2]) begin
+                    vga_box_select<=4'b0100;
+                end else if(~KEY[3]) begin
+                    vga_box_select<=4'b1000;
+                end else begin
+                    vga_box_select <= 4'b0000;
+				end 
+            
+                /*input_timer<=input_timer+1;
+
+                if (input_timer>=32'd250) begin //counts to 15s before terminating
+                  state_current<=state_over;
+				end */
+					 
+				if(player_pos>=computer_pos)begin
+					state_current<=state_check;
+                    vga_box_select <= 4'b0000;
+				end
+            end
+
+            state_check: begin
+                if(computer_pos==0) begin
+                    state_current<=state_random;
+                end else if(computer_pos==5'd32) begin
+                    if(computer_seq==player_seq) begin 
+                        state_current<=state_YOUWIN;
+                    end else begin 
+                        state_current<=state_over;
+                    end
+                end else if(computer_seq==player_seq) begin
+                    LEDR<=led_correct;
+                    state_current<=state_newround;
+                end else begin
+                    state_current<=state_over;
+                end
+            end
+
+            state_YOUWIN: begin
+                state_current<=state_idle;
+                LEDR<=led_win;
+                vga_box_select <= 4'b0000;
+
+            end
+				
+            state_over: begin
+                state_current<=state_idle;
+				LEDR<=led_lose;
+                vga_box_select <= 4'b0000;
+
+            end
+            state_newround: begin
+                LEDR<=led_off;
+                player_seq<=64'b0;
+                player_pos<=5'b0;
+                state_current<=state_random;
+                vga_box_select <= 4'b0000;
+            end
+            default: begin
+                state_current<=state_idle;
+                vga_box_select <= 4'b0000;
+            end
+        endcase
+		end
+    end 
+endmodule
+
+////********Fibonacci LFSR********////
+//see wikipedia page on fibonnaci lfsr - this uses lfsr from lab4
+module randomiser(clk, reset, lfsr);
+    input clk, reset;
+    output reg [15:0] lfsr;
+
+    wire feedback;
+    assign feedback= lfsr[15]^lfsr[13]^lfsr[12]^lfsr[10]; //powers of terms in polynomial
+
+    always@(posedge clk) begin //start shifting seed with feedback
+        if(reset) begin
+            lfsr<=16'hECE2;
+        end else begin
+            lfsr<={lfsr[14:0], feedback};
+        end
+    end
+endmodule
+
+////********doubouncer********//// 
+//uses lab 4(slow counter) and lab 3(d flip flop)
+
+module debounce(reset, clk, db_clk, KEY, button_on);
+    input reset, clk, db_clk;
+    input KEY;
+    output button_on;
+    wire Q0, Q1, Q2, Q2n;
+    assign Q2n=~Q2;
+
+    dff d0(reset, clk, db_clk, KEY, Q0); //stores key
+
+    dff d1(reset, clk, db_clk, Q0, Q1); //generates single pulse of slowclok
+    dff d2(reset, clk, db_clk, Q1, Q2);
+
+    assign button_on = Q1 & Q2n;
+endmodule
+
+//d flip flop
+module dff(reset, clk, db_clk, D, Q);
+	input reset, clk, db_clk, D;
+	output reg Q=0;
+    always@(posedge db_clk) begin
+        if(reset) begin
+            Q<=1;
+        end
+        if(db_clk==1) begin
+            Q<=D;
+        end 
+    end
+endmodule 
+
+module debounce_clock(clk, db_clk);
+    input clk;
+    output reg db_clk;
+    reg[15:0] counter = 0;
+
+    initial begin
+        db_clk = 0;  
+    end
+
+    always @(posedge clk) begin
+        if(counter >= 16'd49999) begin  //1ms
+            counter <= 0;
+            db_clk <= ~db_clk;
+        end else begin
+            counter <= counter + 1;
+        end
+    end
+endmodule
+
+//main fsm clock update
+module display_clock(clk, slow_clk);
+    input clk;
+    output reg slow_clk;
+    
+    reg[27:0] counter = 0;
+    
+    initial begin
+        slow_clk = 0;  
+    end
+
+    always @(posedge clk) begin
+        if(counter >= 28'd19999999) begin //around 0.04s
+            counter <= 0;
+            slow_clk <= ~slow_clk;
+        end else begin
+            counter <= counter + 1;
+        end
+    end
+endmodule
+
+// n-bit up-counter with reset, load, and enable
+module Up_count (R, Clock, Resetn, L, E, Q);
+  parameter n = 8;
+  input [n-1:0] R;
+  input Clock, Resetn, E, L;
+  output reg [n-1:0] Q;
+
+  always @ (posedge Clock)
+      if (~Resetn)
+          Q <= {n{1'b0}};
+      else if (L == 1)
+          Q <= R;
+      else if (E)
+          Q <= Q + 1'b1;
+endmodule
