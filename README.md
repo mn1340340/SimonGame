@@ -2,8 +2,8 @@
 ECE241(Digital Systens) Final Project 
 
 Inspired by the Simon Memory Game 
-- Press key to begin
-- Computer will generate a random sequence of lights of increasing difficulty, shown on the DE1-SoC FPGA board and VGA
+- Press any key to begin
+- Computer will generate a random sequence of lights of increasing difficulty, shown on the DE1-SoC FPGA board and VGA 
 - A unique audio tone plays when each key is displayed or pressed
 - Replicate the sequence correctly to move on to the next round
 - Each round, the sequence length increases, increasing the difficulty  
