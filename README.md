@@ -12,4 +12,4 @@ Inspired by the Simon Memory Game
 - The LEDs shown between each round indicate whether the user was successful or not (4 lights -> correct) (all lights -> wrong) 
 
 ##Video Demo
-<video src="simondemo.mp4" width="320" height="240" controls></video>
+[simondemo.webm](https://github.com/mn1340340/SimonGame/blob/main/simondemo.mp4)
