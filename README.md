@@ -11,5 +11,5 @@ Inspired by the Simon Memory Game
 - Each round, the sequence length increases, increasing the difficulty  
 - The LEDs shown between each round indicate whether the user was successful or not (4 lights -> correct) (all lights -> wrong) 
 
-##Video Demo
-[simondemo.webm](https://github.com/mn1340340/SimonGame/blob/main/simondemo.mp4)
+## Video Demo
+[simondemo.webm](https://github.com/user-attachments/assets/1edbf222-8e6a-4fbd-a9a7-a4285b4953c3)
